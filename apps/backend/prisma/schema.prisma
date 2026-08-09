@@ -1,0 +1,749 @@
+// Smart Energy Load Calculator — Prisma schema
+// PostgreSQL is the authoritative source of truth (per Architecture.docx).
+// Large binary content (PDFs, images) is never stored here — only a
+// storageKey pointing at the S3/MinIO object.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  USER
+  PROFESSIONAL
+  INSTALLER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum ProjectMemberRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum ProjectType {
+  RESIDENTIAL
+  OFFICE
+  SHOP
+  FARM
+  RENTAL
+  OTHER
+}
+
+enum AppliancePriority {
+  ESSENTIAL
+  IMPORTANT
+  OPTIONAL
+}
+
+enum CalculationType {
+  LOAD
+  PEAK
+  FULL
+}
+
+enum CalculationStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ReportStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ReportType {
+  PROJECT_SUMMARY
+  BILL
+  SIZING
+  QUOTATION
+}
+
+enum NotificationType {
+  OVERLOAD
+  SURGE_WARNING
+  HIGH_CONSUMPTION
+  PEAK_LOAD
+  SYSTEM_UNDERSIZED
+  BATTERY_WARNING
+  REPORT_READY
+  BILL_ESTIMATE
+  ENERGY_SAVING
+  GENERAL
+}
+
+enum RecommendationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum ScenarioApplianceAction {
+  ADD
+  MODIFY
+  REMOVE
+}
+
+enum SubscriptionPlan {
+  FREE
+  PRO
+  INSTALLER
+  BUSINESS
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+}
+
+enum BatteryType {
+  LEAD_ACID
+  AGM
+  GEL
+  LITHIUM
+}
+
+// ---------------------------------------------------------------------------
+// Auth / Users
+// ---------------------------------------------------------------------------
+
+model User {
+  id              String     @id @default(uuid())
+  email           String     @unique
+  passwordHash    String
+  name            String
+  phone           String?
+  role            UserRole   @default(USER)
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  preference    UserPreference?
+  sessions      UserSession[]
+  projects      Project[]        @relation("ProjectOwner")
+  memberships   ProjectMember[]
+  reports       Report[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  subscription  Subscription?
+
+  @@map("users")
+}
+
+model UserPreference {
+  userId              String  @id
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unitSystem          String  @default("metric")
+  currency            String  @default("USD")
+  timezone            String  @default("UTC")
+  defaultSafetyMargin Int     @default(20)
+  defaultPowerFactor  Float   @default(0.8)
+
+  // Installer/professional white-label branding, used on generated quotations.
+  companyName  String?
+  logoDataUrl  String? // data: URI (small logo); never a public URL, never stored in object storage
+  brandColorHex String?
+
+  @@map("user_preferences")
+}
+
+// Refresh-token backed sessions, enabling per-device revocation.
+model UserSession {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String
+  userAgent        String?
+  ipAddress        String?
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Projects / Properties
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String      @id @default(uuid())
+  ownerId     String
+  owner       User        @relation("ProjectOwner", fields: [ownerId], references: [id])
+  name        String
+  type        ProjectType @default(RESIDENTIAL)
+  countryCode String      @default("US")
+  region      String?
+  city        String?
+  latitude    Float?
+  longitude   Float?
+  timezone    String      @default("UTC")
+  currency    String      @default("USD")
+  status      String      @default("active")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  members             ProjectMember[]
+  appliances          ProjectAppliance[]
+  schedules           Schedule[]
+  calculations        Calculation[]
+  loadAnalyses        LoadAnalysis[]
+  projectTariff       ProjectTariff?
+  bills               Bill[]
+  inverterCalcs       InverterCalculation[]
+  batteryCalcs        BatteryCalculation[]
+  solarCalcs          SolarCalculation[]
+  generatorCalcs      GeneratorCalculation[]
+  essentialLoad       EssentialLoadProfile?
+  scenarios           Scenario[]
+  recommendations     Recommendation[]
+  reports             Report[]
+
+  @@index([ownerId])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String            @id @default(uuid())
+  projectId String
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      ProjectMemberRole @default(VIEWER)
+  createdAt DateTime          @default(now())
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+// ---------------------------------------------------------------------------
+// Appliances
+// ---------------------------------------------------------------------------
+
+model ApplianceCategory {
+  id        String            @id @default(uuid())
+  name      String            @unique
+  slug      String            @unique
+  icon      String?
+  catalog   ApplianceCatalog[]
+
+  @@map("appliance_categories")
+}
+
+model ApplianceCatalog {
+  id            String            @id @default(uuid())
+  categoryId    String
+  category      ApplianceCategory @relation(fields: [categoryId], references: [id])
+  name          String
+  brand         String?
+  model         String?
+  ratedWatts    Float
+  minWatts      Float?
+  maxWatts      Float?
+  surgeWatts    Float?
+  voltage       Float             @default(230)
+  frequency     Float             @default(50)
+  powerFactor   Float             @default(0.9)
+  standbyWatts  Float             @default(0)
+  isInverterType Boolean          @default(false)
+  metadata      Json?
+  status        String            @default("active")
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  projectAppliances ProjectAppliance[]
+
+  @@index([categoryId])
+  @@map("appliance_catalog")
+}
+
+model ProjectAppliance {
+  id                 String            @id @default(uuid())
+  projectId          String
+  project            Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  catalogApplianceId String?
+  catalogAppliance   ApplianceCatalog? @relation(fields: [catalogApplianceId], references: [id])
+
+  // Snapshotted electrical values (never silently changed by catalog edits)
+  name         String
+  category     String
+  quantity     Int               @default(1)
+  ratedWatts   Float
+  surgeWatts   Float             @default(0)
+  voltage      Float             @default(230)
+  powerFactor  Float             @default(0.9)
+  standbyWatts Float             @default(0)
+  hoursPerDay  Float             @default(1)
+  daysPerMonth Int               @default(30)
+  startTime    String? // "HH:mm", used by the peak-load timeline model
+  priority     AppliancePriority @default(IMPORTANT)
+  isActive     Boolean           @default(true)
+  metadata     Json?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  deletedAt    DateTime?
+
+  calculationItems  CalculationItem[]
+  scenarioAppliances ScenarioAppliance[]
+
+  @@index([projectId])
+  @@map("project_appliances")
+}
+
+// ---------------------------------------------------------------------------
+// Load scheduling
+// ---------------------------------------------------------------------------
+
+model Schedule {
+  id        String         @id @default(uuid())
+  projectId String
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String         @default("Daily Schedule")
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  items     ScheduleItem[]
+
+  @@index([projectId])
+  @@map("schedules")
+}
+
+model ScheduleItem {
+  id                 String   @id @default(uuid())
+  scheduleId         String
+  schedule           Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  projectApplianceId String
+  startTime          String // "HH:mm"
+  endTime            String // "HH:mm"
+
+  @@index([scheduleId])
+  @@map("schedule_items")
+}
+
+// ---------------------------------------------------------------------------
+// Calculation Engine storage
+// ---------------------------------------------------------------------------
+
+model Calculation {
+  id             String            @id @default(uuid())
+  projectId      String
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type           CalculationType   @default(FULL)
+  status         CalculationStatus @default(COMPLETED)
+  engineVersion  String
+  formulaVersion String
+  inputHash      String
+  inputsSnapshot Json
+  safetyMarginPct Float            @default(20)
+
+  // Results (calculation_results, merged onto the calculation row)
+  connectedWatts   Float?
+  runningWatts     Float?
+  peakWatts        Float?
+  surgeWatts       Float?
+  dailyKwh         Float?
+  monthlyKwh       Float?
+  annualKwh        Float?
+  estimatedBill    Float?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  items        CalculationItem[]
+  loadAnalyses LoadAnalysis[]
+
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("calculations")
+}
+
+model CalculationItem {
+  id                 String            @id @default(uuid())
+  calculationId      String
+  calculation        Calculation       @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  projectApplianceId String?
+  projectAppliance   ProjectAppliance? @relation(fields: [projectApplianceId], references: [id])
+  name               String
+  quantity           Int
+  runningWatts       Float
+  surgeWatts         Float
+  hoursPerDay        Float
+  dailyKwh           Float
+  monthlyKwh         Float
+
+  @@index([calculationId])
+  @@map("calculation_items")
+}
+
+model LoadAnalysis {
+  id               String       @id @default(uuid())
+  projectId        String
+  project          Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  calculationId    String?
+  calculation      Calculation? @relation(fields: [calculationId], references: [id])
+  peakRunningWatts Float
+  peakSurgeWatts   Float
+  peakTime         String // "HH:mm"
+  timeline         Json // [{ time: "HH:mm", runningWatts, surgeWatts }]
+  createdAt        DateTime     @default(now())
+
+  @@index([projectId])
+  @@map("load_analyses")
+}
+
+// ---------------------------------------------------------------------------
+// Tariffs & Bills
+// ---------------------------------------------------------------------------
+
+model Tariff {
+  id            String    @id @default(uuid())
+  provider      String
+  countryCode   String
+  region        String?
+  currency      String
+  name          String
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+  version       Int       @default(1)
+  status        String    @default("active")
+
+  slabs          TariffSlab[]
+  projectTariffs ProjectTariff[]
+  bills          Bill[]
+
+  @@index([countryCode])
+  @@map("tariffs")
+}
+
+model TariffSlab {
+  id           String  @id @default(uuid())
+  tariffId     String
+  tariff       Tariff  @relation(fields: [tariffId], references: [id], onDelete: Cascade)
+  minKwh       Float
+  maxKwh       Float? // null = unbounded (top slab)
+  ratePerKwh   Float
+  fixedCharge  Float   @default(0)
+  taxRatePct   Float   @default(0)
+  sortOrder    Int     @default(0)
+
+  @@index([tariffId])
+  @@map("tariff_slabs")
+}
+
+model ProjectTariff {
+  id        String   @id @default(uuid())
+  projectId String   @unique
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tariffId  String
+  tariff    Tariff   @relation(fields: [tariffId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("project_tariffs")
+}
+
+model Bill {
+  id               String   @id @default(uuid())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tariffId         String
+  tariff           Tariff   @relation(fields: [tariffId], references: [id])
+  tariffVersion    Int
+  tariffSnapshot   Json
+  inputKwh         Float
+  energyCharge     Float
+  fixedCharges     Float
+  taxes            Float
+  calculatedAmount Float
+  createdAt        DateTime @default(now())
+
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("bills")
+}
+
+// ---------------------------------------------------------------------------
+// System sizing
+// ---------------------------------------------------------------------------
+
+model InverterCalculation {
+  id                    String   @id @default(uuid())
+  projectId             String
+  project               Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  peakRunningW          Float
+  peakSurgeW            Float
+  powerFactor           Float
+  safetyMarginPct       Float
+  minInverterVA         Float
+  recommendedInverterVA Float
+  recommendedKva        Float
+  requiredSurgeVA       Float
+  utilizationPct        Float
+  isUndersized          Boolean  @default(false)
+  createdAt             DateTime @default(now())
+
+  @@index([projectId])
+  @@map("inverter_calculations")
+}
+
+model BatteryCalculation {
+  id                    String      @id @default(uuid())
+  projectId             String
+  project               Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  loadW                 Float
+  backupHours           Float
+  batteryVoltage        Float
+  batteryType           BatteryType @default(LEAD_ACID)
+  depthOfDischarge      Float
+  inverterEfficiency    Float
+  safetyMarginPct       Float
+  requiredWh            Float
+  requiredAh            Float
+  singleBatteryAh       Float
+  numberOfBatteries     Int
+  configuration         String // e.g. "2S2P"
+  estimatedRuntimeHours Float
+  createdAt             DateTime    @default(now())
+
+  @@index([projectId])
+  @@map("battery_calculations")
+}
+
+model SolarCalculation {
+  id                     String   @id @default(uuid())
+  projectId              String
+  project                Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dailyKwh               Float
+  peakSunHours           Float
+  systemEfficiencyPct    Float
+  panelWattage           Float
+  desiredCoveragePct     Float
+  requiredKw             Float
+  panelQuantity          Int
+  estimatedDailyGenKwh   Float
+  estimatedMonthlyGenKwh Float
+  actualCoveragePct      Float
+  batteryRequirementWh   Float?
+  estimatedMonthlySavings Float?
+  paybackYears           Float?
+  dataSource             String   @default("formula") // "formula" | "nrel_pvwatts"
+  rawProviderResponse    Json?
+  createdAt              DateTime @default(now())
+
+  @@index([projectId])
+  @@map("solar_calculations")
+}
+
+model GeneratorCalculation {
+  id                     String   @id @default(uuid())
+  projectId              String
+  project                Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runningLoadW           Float
+  startingLoadW          Float
+  powerFactor            Float
+  safetyMarginPct        Float
+  minKva                 Float
+  recommendedKva         Float
+  estimatedUtilizationPct Float
+  createdAt              DateTime @default(now())
+
+  @@index([projectId])
+  @@map("generator_calculations")
+}
+
+model EssentialLoadProfile {
+  id                String   @id @default(uuid())
+  projectId         String   @unique
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  essentialRunningW Float
+  essentialPeakW    Float
+  fullHomeRunningW  Float
+  fullHomePeakW     Float
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("essential_load_profiles")
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios (What-If Simulator)
+// ---------------------------------------------------------------------------
+
+model Scenario {
+  id                String   @id @default(uuid())
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name              String
+  baseCalculationId String?
+  status            String   @default("draft")
+  createdAt         DateTime @default(now())
+
+  appliances ScenarioAppliance[]
+  result     ScenarioResult?
+
+  @@index([projectId])
+  @@map("scenarios")
+}
+
+model ScenarioAppliance {
+  id                 String                   @id @default(uuid())
+  scenarioId         String
+  scenario           Scenario                 @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  projectApplianceId String?
+  projectAppliance   ProjectAppliance?        @relation(fields: [projectApplianceId], references: [id])
+  action             ScenarioApplianceAction  @default(MODIFY)
+  name               String
+  quantity           Int
+  ratedWatts         Float
+  surgeWatts         Float                    @default(0)
+  hoursPerDay         Float
+
+  @@index([scenarioId])
+  @@map("scenario_appliances")
+}
+
+model ScenarioResult {
+  id             String   @id @default(uuid())
+  scenarioId     String   @unique
+  scenario       Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  peakLoadW      Float
+  dailyKwh       Float
+  monthlyKwh     Float
+  estimatedBill  Float
+  inverterVA     Float
+  batteryAh      Float
+  solarKw        Float
+  generatorKva   Float
+  createdAt      DateTime @default(now())
+
+  @@map("scenario_results")
+}
+
+// ---------------------------------------------------------------------------
+// Recommendations
+// ---------------------------------------------------------------------------
+
+model Recommendation {
+  id         String                 @id @default(uuid())
+  projectId  String
+  project    Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type       String
+  severity   RecommendationSeverity @default(INFO)
+  message    String
+  meta       Json?
+  createdAt  DateTime               @default(now())
+  resolvedAt DateTime?
+
+  @@index([projectId])
+  @@map("recommendations")
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+model Report {
+  id            String       @id @default(uuid())
+  projectId     String
+  project       Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdById   String
+  createdBy     User         @relation(fields: [createdById], references: [id])
+  type          ReportType   @default(PROJECT_SUMMARY)
+  status        ReportStatus @default(QUEUED)
+  engineVersion String?
+  storageKey    String?
+  failureReason String?
+  lineItems     Json? // QUOTATION only: [{ label, description, unitCost, quantity }]
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+
+  @@index([projectId])
+  @@map("reports")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String            @id @default(uuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType  @default(GENERAL)
+  title     String
+  message   String
+  isRead    Boolean           @default(false)
+  meta      Json?
+  createdAt DateTime          @default(now())
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions (Stripe-backed; mock provider used without a real key)
+// ---------------------------------------------------------------------------
+
+model Subscription {
+  id                   String             @id @default(uuid())
+  userId               String             @unique
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                 SubscriptionPlan   @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@map("subscriptions")
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  action       String
+  resourceType String
+  resourceId   String?
+  meta         Json?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

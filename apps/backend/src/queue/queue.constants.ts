@@ -1,0 +1,3 @@
+export const REPORTS_QUEUE = "reports";
+export const REDIS_CONNECTION = "REDIS_CONNECTION";
+export const REPORTS_QUEUE_TOKEN = "REPORTS_QUEUE_TOKEN";

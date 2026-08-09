@@ -1,0 +1,66 @@
+# Local development infrastructure for the Smart Energy Load Calculator.
+# Mirrors the documented production architecture (PostgreSQL as source of
+# truth, Redis for cache/queues, S3-compatible object storage for reports)
+# using self-hosted equivalents so the whole stack runs with `docker compose up`
+# and no cloud accounts.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: energy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: energy
+      POSTGRES_PASSWORD: energy_dev_password
+      POSTGRES_DB: energy_calculator
+    ports:
+      # Host port 5436, not 5432: this machine runs several native
+      # PostgreSQL Windows services occupying 5432-5435, and Docker's
+      # port-forward can be silently shadowed by one of them. 5436 is the
+      # first free port found (checked with Get-NetTCPConnection).
+      - "5436:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U energy -d energy_calculator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: energy-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: energy-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: energy_minio
+      MINIO_ROOT_PASSWORD: energy_minio_password
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

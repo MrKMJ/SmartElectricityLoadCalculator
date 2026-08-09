@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.next/
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+coverage/
+apps/backend/generated/
+apps/backend/prisma/dev.db
+*.tsbuildinfo
+~$*.docx
+~$*.doc
+.vercel/
+.claude/
