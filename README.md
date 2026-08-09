@@ -67,6 +67,11 @@ mobile/report/IoT client, all share the same authoritative math. See
   management, appliance-catalog CRUD, tariff CRUD — a frontend on top of the admin API routes that
   existed from Phase 1 but had no UI
 
+## Deploying
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for a step-by-step guide to deploying this for free/cheap on
+Railway (API + worker + Postgres + Redis) + Vercel (frontend) + Cloudflare R2 (storage).
+
 ### Stubbed / Phase 2+ (per the doc's own phased rollout)
 
 Behind the `src/integrations/` abstraction so real credentials can be dropped in later without
