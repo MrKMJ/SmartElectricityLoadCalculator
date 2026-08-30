@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.smartenergyloadcalculator.twa",
+      "sha256_cert_fingerprints": [
+        "DA:4B:C2:04:65:53:7E:4A:0B:68:CF:63:DF:6B:EB:E4:66:04:2D:3B:DC:6B:AD:24:03:63:3E:6F:A6:CC:10:CA"
+      ]
+    }
+  }
+]

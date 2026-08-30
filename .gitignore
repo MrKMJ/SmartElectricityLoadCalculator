@@ -17,3 +17,7 @@ apps/backend/prisma/dev.db
 .claude/
 private_key
 private_key.pub
+
+# Android TWA build — contains the app signing keystore (permanent,
+# never rotatable) and its password. Never commit this.
+android-twa/
