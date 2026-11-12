@@ -161,3 +161,13 @@ This is a personal/local deployment of the Phase 1 MVP, not the full multi-tenan
 architecture doc sketches for later phases (subscriptions, installer portal, smart-meter
 ingestion, AI/OCR). Those are intentionally left as mocked integration points rather than built
 out, per the doc's own "don't implement all of the above simultaneously" guidance.
+
+---
+
+## Hire me to build this for you
+
+Need a calculator, dashboard or full web app like this for your business? I build these through Fiverr.
+
+- [Full stack web app: REST API + React front end](https://www.fiverr.com/moinjamal/build-a-django-rest-api-and-react-web-app-for-your-ai-or-saas-product)
+
+[![Hire me on Fiverr](https://img.shields.io/badge/Hire_me_on-Fiverr-1DBF73?style=for-the-badge&logo=fiverr&logoColor=white)](https://www.fiverr.com/moinjamal)
